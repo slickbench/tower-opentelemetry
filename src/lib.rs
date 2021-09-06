@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     future::Future,
     pin::Pin,
+    error::Error as StdError,
     task::{ready, Poll},
 };
 
@@ -102,7 +103,7 @@ where
     S: Service<Request<B>, Response = Response<ResBody>>,
     S::Future: 'static + Send,
     B: 'static,
-    S::Error: std::fmt::Debug,
+    S::Error: std::fmt::Debug + StdError,
 {
     type Error = S::Error;
     type Future = Pin<Box<CF<Self::Response, Self::Error>>>;
@@ -175,6 +176,7 @@ where
                 Err(err) => {
                     let span = cx.span();
                     span.set_status(StatusCode::Error, format!("{:?}", err));
+                    span.record_exception(&err);
                     span.end();
                     Err(err)
                 }
