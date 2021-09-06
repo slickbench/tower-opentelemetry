@@ -1,10 +1,5 @@
-use std::{
-    borrow::Cow,
-    future::Future,
-    pin::Pin,
-    error::Error as StdError,
-    task::{ready, Poll},
-};
+#![warn(clippy::pedantic)]
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -22,7 +17,6 @@ use opentelemetry_semantic_conventions::trace::{
     HTTP_FLAVOR, HTTP_METHOD, HTTP_STATUS_CODE, HTTP_TARGET, HTTP_URL, HTTP_USER_AGENT,
     NET_HOST_NAME,
 };
-use pin_project::pin_project;
 use sysinfo::{System, SystemExt};
 
 lazy_static! {
@@ -67,6 +61,7 @@ pub struct Layer {}
 
 impl Layer {
     /// Create a new [`TraceLayer`] using the given [`MakeClassifier`].
+    #[must_use]
     pub fn new() -> Self {
         Self {}
     }
@@ -136,14 +131,14 @@ where
         }
 
         if let Some(path) = uri.path_and_query() {
-            attributes.push(HTTP_TARGET.string(path.as_str().to_string()))
+            attributes.push(HTTP_TARGET.string(path.as_str().to_string()));
         }
         if let Some(user_agent) = req
             .headers()
             .get(header::USER_AGENT)
             .and_then(|s| s.to_str().ok())
         {
-            attributes.push(HTTP_USER_AGENT.string(user_agent.to_string()))
+            attributes.push(HTTP_USER_AGENT.string(user_agent.to_string()));
         }
         builder.attributes = Some(attributes);
         let span = self.tracer.build(builder);
@@ -157,10 +152,10 @@ where
             .map(move |res| match res {
                 Ok(mut ok_res) => {
                     opentelemetry::global::get_text_map_propagator(|propagator| {
-                        propagator.inject(&mut HeaderCarrier::new(ok_res.headers_mut()))
+                        propagator.inject(&mut HeaderCarrier::new(ok_res.headers_mut()));
                     });
                     let span = cx.span();
-                    span.set_attribute(HTTP_STATUS_CODE.i64(ok_res.status().as_u16() as i64));
+                    span.set_attribute(HTTP_STATUS_CODE.i64(i64::from(ok_res.status().as_u16())));
                     if ok_res.status().is_server_error() {
                         span.set_status(
                             StatusCode::Error,
@@ -204,7 +199,7 @@ impl<'a> Extractor for HeaderCarrier<'a> {
     }
 
     fn keys(&self) -> Vec<&str> {
-        self.headers.keys().map(|header| header.as_str()).collect()
+        self.headers.keys().map(HeaderName::as_str).collect()
     }
 }
 
@@ -218,9 +213,4 @@ impl<'a> Injector for HeaderCarrier<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+mod tests {}
