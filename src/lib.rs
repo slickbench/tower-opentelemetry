@@ -24,8 +24,6 @@ use opentelemetry_semantic_conventions::trace::{
 };
 use pin_project::pin_project;
 use sysinfo::{System, SystemExt};
-use tower_service::Service;
-use tower_layer::Layer;
 
 lazy_static! {
     static ref SYSTEM: System = System::new_all();
@@ -65,30 +63,33 @@ fn http_flavor(version: Version) -> Cow<'static, str> {
 /// [opentelemetry propagation]: https://opentelemetry.io/docs/java/manual_instrumentation/#context-propagation
 /// [`Service`]: tower_service::Service
 #[derive(Debug, Copy, Clone)]
-pub struct PropagatorLayer {}
+pub struct Layer {}
 
-impl PropagatorLayer {
+impl Layer {
     /// Create a new [`TraceLayer`] using the given [`MakeClassifier`].
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl<S> Layer<S> for PropagatorLayer {
-    type Service = Propagator<S>;
+impl<S> tower_layer::Layer<S> for Layer {
+    type Service = Service<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        Propagator::new(inner)
+        Service::new(inner)
     }
 }
 
-/// Middleware that propagates the opentelemetry trace header.
-pub struct Propagator<S> {
+/// Middleware [`Service`] that propagates the opentelemetry trace header, configures a span for
+/// the request, and records any exceptions.
+///
+/// [`Service`]: tower_service::Service
+pub struct Service<S> {
     inner: S,
     tracer: global::BoxedTracer,
 }
 
-impl<S> Propagator<S> {
+impl<S> Service<S> {
     fn new(inner: S) -> Self {
         Self {
             inner,
@@ -98,9 +99,9 @@ impl<S> Propagator<S> {
 }
 
 type CF<R, E> = dyn Future<Output = Result<R, E>> + Send;
-impl<B, ResBody, S> Service<Request<B>> for Propagator<S>
+impl<B, ResBody, S> tower_service::Service<Request<B>> for Service<S>
 where
-    S: Service<Request<B>, Response = Response<ResBody>>,
+    S: tower_service::Service<Request<B>, Response = Response<ResBody>>,
     S::Future: 'static + Send,
     B: 'static,
     S::Error: std::fmt::Debug + StdError,
@@ -116,7 +117,7 @@ where
 
     fn call(&mut self, mut req: Request<B>) -> Self::Future {
         let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.extract(&RequestHeaderCarrier::new(req.headers_mut()))
+            propagator.extract(&HeaderCarrier::new(req.headers_mut()))
         });
         // let conn_info = req.connection_info();
         let uri = req.uri();
@@ -156,7 +157,7 @@ where
             .map(move |res| match res {
                 Ok(mut ok_res) => {
                     opentelemetry::global::get_text_map_propagator(|propagator| {
-                        propagator.inject(&mut ResultHeaderCarrier::new(ok_res.headers_mut()))
+                        propagator.inject(&mut HeaderCarrier::new(ok_res.headers_mut()))
                     });
                     let span = cx.span();
                     span.set_attribute(HTTP_STATUS_CODE.i64(ok_res.status().as_u16() as i64));
@@ -173,7 +174,7 @@ where
                     span.end();
                     Ok(ok_res)
                 }
-                Err(err) => {
+                Err(error) => {
                     let span = cx.span();
                     span.set_status(StatusCode::Error, format!("{:?}", err));
                     span.record_exception(&err);
@@ -187,42 +188,17 @@ where
     }
 }
 
-/// Response future for [`SetResponseHeader`].
-#[pin_project]
-#[derive(Debug)]
-pub struct ResponseFuture<F> {
-    #[pin]
-    future: F,
+struct HeaderCarrier<'a> {
+    headers: &'a mut http::HeaderMap,
 }
 
-impl<F, ResBody, E> Future for ResponseFuture<F>
-where
-    F: Future<Output = Result<Response<ResBody>, E>>,
-{
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        let res = ready!(this.future.poll(cx)?);
-
-        // FIXME: HERE IS WHERE WE ADD THE HEADER
-        // this.mode.apply(this.header_name, &mut res, &mut *this.make);
-
-        Poll::Ready(Ok(res))
+impl<'a> HeaderCarrier<'a> {
+    fn new(headers: &'a mut http::HeaderMap) -> Self {
+        HeaderCarrier { headers }
     }
 }
 
-struct RequestHeaderCarrier<'a> {
-    headers: &'a http::HeaderMap,
-}
-
-impl<'a> RequestHeaderCarrier<'a> {
-    fn new(headers: &'a http::HeaderMap) -> Self {
-        RequestHeaderCarrier { headers }
-    }
-}
-
-impl<'a> Extractor for RequestHeaderCarrier<'a> {
+impl<'a> Extractor for HeaderCarrier<'a> {
     fn get(&self, key: &str) -> Option<&str> {
         self.headers.get(key).and_then(|v| v.to_str().ok())
     }
@@ -232,17 +208,7 @@ impl<'a> Extractor for RequestHeaderCarrier<'a> {
     }
 }
 
-struct ResultHeaderCarrier<'a> {
-    headers: &'a mut http::HeaderMap,
-}
-
-impl<'a> ResultHeaderCarrier<'a> {
-    fn new(headers: &'a mut http::HeaderMap) -> Self {
-        ResultHeaderCarrier { headers }
-    }
-}
-
-impl<'a> Injector for ResultHeaderCarrier<'a> {
+impl<'a> Injector for HeaderCarrier<'a> {
     fn set(&mut self, key: &str, value: String) {
         self.headers.insert(
             HeaderName::from_bytes(key.as_bytes()).expect("invalid header name"),
