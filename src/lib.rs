@@ -62,7 +62,7 @@ fn http_flavor(version: Version) -> Cow<'static, str> {
 /// [`Layer`]: tower_layer::Layer
 /// [opentelemetry propagation]: https://opentelemetry.io/docs/java/manual_instrumentation/#context-propagation
 /// [`Service`]: tower_service::Service
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct Layer {}
 
 impl Layer {
@@ -176,10 +176,10 @@ where
                 }
                 Err(error) => {
                     let span = cx.span();
-                    span.set_status(StatusCode::Error, format!("{:?}", err));
-                    span.record_exception(&err);
+                    span.set_status(StatusCode::Error, format!("{:?}", error));
+                    span.record_exception(&error);
                     span.end();
-                    Err(err)
+                    Err(error)
                 }
             });
 
