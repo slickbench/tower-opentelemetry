@@ -1,3 +1,4 @@
+#![feature(backtrace)]
 #![warn(clippy::pedantic)]
 use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll};
 
@@ -172,7 +173,11 @@ where
                 Err(error) => {
                     let span = cx.span();
                     span.set_status(StatusCode::Error, format!("{:?}", error));
-                    span.record_exception(&error);
+                    if let Some(backtrace) = error.backtrace() {
+                        span.record_exception_with_stacktrace(&error, backtrace.to_string());
+                    } else {
+                        span.record_exception(&error);
+                    }
                     span.end();
                     Err(error)
                 }
