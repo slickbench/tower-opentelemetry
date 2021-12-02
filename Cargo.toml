@@ -1,6 +1,6 @@
 [package]
 name = "tower-opentelemetry"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2018"
 description = "An OpenTelemetry layer for Tower"
 license-file = "LICENSE"

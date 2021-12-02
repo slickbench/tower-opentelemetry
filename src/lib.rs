@@ -1,6 +1,6 @@
 #![feature(backtrace)]
 #![warn(clippy::pedantic)]
-use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll};
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll, sync::Arc};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -68,7 +68,7 @@ impl Layer {
     }
 }
 
-impl<S> tower_layer::Layer<S> for Layer {
+impl<S> tower_layer::Layer<S> for Layer where S: Clone {
     type Service = Service<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -80,16 +80,17 @@ impl<S> tower_layer::Layer<S> for Layer {
 /// the request, and records any exceptions.
 ///
 /// [`Service`]: tower_service::Service
-pub struct Service<S> {
+#[derive(Clone)]
+pub struct Service<S: Clone> {
     inner: S,
-    tracer: global::BoxedTracer,
+    tracer: Arc<global::BoxedTracer>,
 }
 
-impl<S> Service<S> {
+impl<S> Service<S> where S: Clone {
     fn new(inner: S) -> Self {
         Self {
             inner,
-            tracer: global::tracer_with_version("tower-opentelemetry", env!("CARGO_PKG_VERSION")),
+            tracer: Arc::new(global::tracer_with_version("tower-opentelemetry", env!("CARGO_PKG_VERSION"))),
         }
     }
 }
@@ -101,6 +102,7 @@ where
     S::Future: 'static + Send,
     B: 'static,
     S::Error: std::fmt::Debug + StdError,
+    S: Clone
 {
     type Error = S::Error;
     type Future = Pin<Box<CF<Self::Response, Self::Error>>>;
