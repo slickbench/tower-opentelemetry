@@ -11,7 +11,7 @@ use lazy_static::lazy_static;
 use opentelemetry::{
     global,
     propagation::{Extractor, Injector},
-    trace::{FutureExt as OtelFutureExt, SpanKind, StatusCode, TraceContextExt, Tracer},
+    trace::{FutureExt as OtelFutureExt, SpanKind, StatusCode, TraceContextExt, Tracer, TracerProvider, TraceId, SpanId},
     Context,
 };
 use opentelemetry_semantic_conventions::trace::{
@@ -90,7 +90,7 @@ impl<S> Service<S> where S: Clone {
     fn new(inner: S) -> Self {
         Self {
             inner,
-            tracer: Arc::new(global::tracer_with_version("tower-opentelemetry", env!("CARGO_PKG_VERSION"))),
+            tracer: Arc::new(global::tracer_provider().versioned_tracer("tower-opentelemetry", Some(env!("CARGO_PKG_VERSION")), None)),
         }
     }
 }
@@ -122,8 +122,13 @@ where
         let mut builder = self
             .tracer
             .span_builder(uri.path().to_string())
-            .with_parent_context(parent_context)
             .with_kind(SpanKind::Server);
+        if let Some(trace_id) = parent_context.get::<TraceId>() {
+            builder = builder.with_trace_id(*trace_id);
+        }
+        if let Some(span_id) = parent_context.get::<SpanId>() {
+            builder = builder.with_span_id(*span_id);
+        }
         let mut attributes = Vec::with_capacity(11);
         attributes.push(HTTP_METHOD.string(http_method_str(req.method())));
         attributes.push(HTTP_FLAVOR.string(http_flavor(req.version())));
