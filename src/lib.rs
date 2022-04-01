@@ -1,6 +1,6 @@
-#![feature(backtrace)]
+#![cfg_attr(feature = "backtrace", feature(backtrace))]
 #![warn(clippy::pedantic)]
-use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll, sync::Arc};
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, sync::Arc, task::Poll};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -11,7 +11,10 @@ use lazy_static::lazy_static;
 use opentelemetry::{
     global,
     propagation::{Extractor, Injector},
-    trace::{FutureExt as OtelFutureExt, SpanKind, StatusCode, TraceContextExt, Tracer, TracerProvider, TraceId, SpanId},
+    trace::{
+        FutureExt as OtelFutureExt, SpanId, SpanKind, StatusCode, TraceContextExt, TraceId, Tracer,
+        TracerProvider,
+    },
     Context,
 };
 use opentelemetry_semantic_conventions::trace::{
@@ -68,7 +71,10 @@ impl Layer {
     }
 }
 
-impl<S> tower_layer::Layer<S> for Layer where S: Clone {
+impl<S> tower_layer::Layer<S> for Layer
+where
+    S: Clone,
+{
     type Service = Service<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -86,11 +92,18 @@ pub struct Service<S: Clone> {
     tracer: Arc<global::BoxedTracer>,
 }
 
-impl<S> Service<S> where S: Clone {
+impl<S> Service<S>
+where
+    S: Clone,
+{
     fn new(inner: S) -> Self {
         Self {
             inner,
-            tracer: Arc::new(global::tracer_provider().versioned_tracer("tower-opentelemetry", Some(env!("CARGO_PKG_VERSION")), None)),
+            tracer: Arc::new(global::tracer_provider().versioned_tracer(
+                "tower-opentelemetry",
+                Some(env!("CARGO_PKG_VERSION")),
+                None,
+            )),
         }
     }
 }
@@ -102,7 +115,7 @@ where
     S::Future: 'static + Send,
     B: 'static,
     S::Error: std::fmt::Debug + StdError,
-    S: Clone
+    S: Clone,
 {
     type Error = S::Error;
     type Future = Pin<Box<CF<Self::Response, Self::Error>>>;
@@ -180,11 +193,14 @@ where
                 Err(error) => {
                     let span = cx.span();
                     span.set_status(StatusCode::Error, format!("{:?}", error));
+                    #[cfg(feature = "backtrace")]
                     if let Some(backtrace) = error.backtrace() {
                         span.record_exception_with_stacktrace(&error, backtrace.to_string());
                     } else {
                         span.record_exception(&error);
                     }
+                    #[cfg(not(feature = "backtrace"))]
+                    span.record_exception(&error);
                     span.end();
                     Err(error)
                 }
