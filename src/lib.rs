@@ -1,6 +1,5 @@
-#![feature(backtrace)]
 #![warn(clippy::pedantic)]
-use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll, sync::Arc};
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll, sync::Arc, backtrace::Backtrace};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -180,11 +179,7 @@ where
                 Err(error) => {
                     let span = cx.span();
                     span.set_status(StatusCode::Error, format!("{:?}", error));
-                    if let Some(backtrace) = error.backtrace() {
-                        span.record_exception_with_stacktrace(&error, backtrace.to_string());
-                    } else {
-                        span.record_exception(&error);
-                    }
+                    span.record_exception_with_stacktrace(&error, Backtrace::force_capture().to_string());
                     span.end();
                     Err(error)
                 }
