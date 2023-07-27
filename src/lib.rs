@@ -1,8 +1,5 @@
 #![warn(clippy::pedantic)]
-use std::{
-    backtrace::Backtrace, borrow::Cow, error::Error as StdError, future::Future, pin::Pin,
-    sync::Arc, task::Poll,
-};
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, sync::Arc, task::Poll};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -14,8 +11,8 @@ use opentelemetry::{
     global,
     propagation::{Extractor, Injector},
     trace::{
-        FutureExt as OtelFutureExt, OrderMap, SpanId, SpanKind, Status, TraceContextExt, TraceId,
-        Tracer, TracerProvider,
+        FutureExt as OtelFutureExt, OrderMap, SpanKind, Status, TraceContextExt, Tracer,
+        TracerProvider,
     },
     Context, Key, Value,
 };
@@ -138,12 +135,9 @@ where
             .tracer
             .span_builder(uri.path().to_string())
             .with_kind(SpanKind::Server);
-        if let Some(trace_id) = parent_context.get::<TraceId>() {
-            builder = builder.with_trace_id(*trace_id);
-        }
-        if let Some(span_id) = parent_context.get::<SpanId>() {
-            builder = builder.with_span_id(*span_id);
-        }
+        let parent_span = parent_context.span();
+        builder = builder.with_trace_id(parent_span.span_context().trace_id());
+        builder = builder.with_span_id(parent_span.span_context().span_id());
         let mut attributes = OrderMap::<Key, Value>::with_capacity(11);
         attributes.insert(HTTP_METHOD, http_method_str(req.method()).into());
         attributes.insert(HTTP_FLAVOR, http_flavor(req.version()).into());
