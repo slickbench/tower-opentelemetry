@@ -1,6 +1,6 @@
 [package]
 name = "tower-opentelemetry"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2018"
 description = "An OpenTelemetry layer for Tower"
 license-file = "LICENSE"
@@ -16,5 +16,5 @@ http = "0.2"
 tower-layer = "0.3"
 tower-service = "0.3"
 
-opentelemetry = { version = "0.17", features = ["trace"] }
-opentelemetry-semantic-conventions = "0.9"
+opentelemetry = { version = "0.18", features = ["trace"] }
+opentelemetry-semantic-conventions = "0.10"

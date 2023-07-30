@@ -1,5 +1,5 @@
 #![warn(clippy::pedantic)]
-use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, task::Poll, sync::Arc, backtrace::Backtrace};
+use std::{borrow::Cow, error::Error as StdError, future::Future, pin::Pin, sync::Arc, task::Poll};
 
 use futures_util::future::FutureExt;
 use http::{
@@ -10,8 +10,11 @@ use lazy_static::lazy_static;
 use opentelemetry::{
     global,
     propagation::{Extractor, Injector},
-    trace::{FutureExt as OtelFutureExt, SpanKind, StatusCode, TraceContextExt, Tracer, TracerProvider, TraceId, SpanId},
-    Context,
+    trace::{
+        FutureExt as OtelFutureExt, OrderMap, SpanKind, Status, TraceContextExt, Tracer,
+        TracerProvider,
+    },
+    Context, Key, Value,
 };
 use opentelemetry_semantic_conventions::trace::{
     HTTP_FLAVOR, HTTP_METHOD, HTTP_STATUS_CODE, HTTP_TARGET, HTTP_URL, HTTP_USER_AGENT,
@@ -67,7 +70,10 @@ impl Layer {
     }
 }
 
-impl<S> tower_layer::Layer<S> for Layer where S: Clone {
+impl<S> tower_layer::Layer<S> for Layer
+where
+    S: Clone,
+{
     type Service = Service<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -85,11 +91,18 @@ pub struct Service<S: Clone> {
     tracer: Arc<global::BoxedTracer>,
 }
 
-impl<S> Service<S> where S: Clone {
+impl<S> Service<S>
+where
+    S: Clone,
+{
     fn new(inner: S) -> Self {
         Self {
             inner,
-            tracer: Arc::new(global::tracer_provider().versioned_tracer("tower-opentelemetry", Some(env!("CARGO_PKG_VERSION")), None)),
+            tracer: Arc::new(global::tracer_provider().versioned_tracer(
+                "tower-opentelemetry",
+                Some(env!("CARGO_PKG_VERSION")),
+                None,
+            )),
         }
     }
 }
@@ -101,7 +114,7 @@ where
     S::Future: 'static + Send,
     B: 'static,
     S::Error: std::fmt::Debug + StdError,
-    S: Clone
+    S: Clone,
 {
     type Error = S::Error;
     type Future = Pin<Box<CF<Self::Response, Self::Error>>>;
@@ -116,41 +129,33 @@ where
         let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.extract(&HeaderCarrier::new(req.headers_mut()))
         });
-        // let conn_info = req.connection_info();
+        let _cx_guard = parent_context.attach();
+
         let uri = req.uri();
         let mut builder = self
             .tracer
             .span_builder(uri.path().to_string())
             .with_kind(SpanKind::Server);
-        if let Some(trace_id) = parent_context.get::<TraceId>() {
-            builder = builder.with_trace_id(*trace_id);
-        }
-        if let Some(span_id) = parent_context.get::<SpanId>() {
-            builder = builder.with_span_id(*span_id);
-        }
-        let mut attributes = Vec::with_capacity(11);
-        attributes.push(HTTP_METHOD.string(http_method_str(req.method())));
-        attributes.push(HTTP_FLAVOR.string(http_flavor(req.version())));
-        attributes.push(HTTP_URL.string(uri.to_string()));
-
+        let mut attributes = OrderMap::<Key, Value>::with_capacity(11);
+        attributes.insert(HTTP_METHOD, http_method_str(req.method()).into());
+        attributes.insert(HTTP_FLAVOR, http_flavor(req.version()).into());
+        attributes.insert(HTTP_URL, uri.to_string().into());
         if let Some(host_name) = SYSTEM.host_name() {
-            attributes.push(NET_HOST_NAME.string(host_name));
+            attributes.insert(NET_HOST_NAME, host_name.into());
         }
-
         if let Some(path) = uri.path_and_query() {
-            attributes.push(HTTP_TARGET.string(path.as_str().to_string()));
+            attributes.insert(HTTP_TARGET, path.as_str().to_string().into());
         }
         if let Some(user_agent) = req
             .headers()
             .get(header::USER_AGENT)
             .and_then(|s| s.to_str().ok())
         {
-            attributes.push(HTTP_USER_AGENT.string(user_agent.to_string()));
+            attributes.insert(HTTP_USER_AGENT, user_agent.to_string().into());
         }
         builder.attributes = Some(attributes);
         let span = self.tracer.build(builder);
         let cx = Context::current_with_span(span);
-        let attachment = cx.clone().attach();
 
         let fut = self
             .inner
@@ -164,28 +169,26 @@ where
                     let span = cx.span();
                     span.set_attribute(HTTP_STATUS_CODE.i64(i64::from(ok_res.status().as_u16())));
                     if ok_res.status().is_server_error() {
-                        span.set_status(
-                            StatusCode::Error,
-                            ok_res
+                        span.set_status(Status::Error {
+                            description: ok_res
                                 .status()
                                 .canonical_reason()
                                 .map(ToString::to_string)
-                                .unwrap_or_default(),
-                        );
+                                .unwrap_or_default()
+                                .into(),
+                        });
                     };
                     span.end();
                     Ok(ok_res)
                 }
                 Err(error) => {
                     let span = cx.span();
-                    span.set_status(StatusCode::Error, format!("{:?}", error));
-                    span.record_exception_with_stacktrace(&error, Backtrace::force_capture().to_string());
+                    span.record_error(&error);
                     span.end();
                     Err(error)
                 }
             });
 
-        drop(attachment);
         Box::pin(fut)
     }
 }
