@@ -129,24 +129,20 @@ where
         let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.extract(&HeaderCarrier::new(req.headers_mut()))
         });
-        // let conn_info = req.connection_info();
+        let _cx_guard = parent_context.attach();
+
         let uri = req.uri();
         let mut builder = self
             .tracer
             .span_builder(uri.path().to_string())
             .with_kind(SpanKind::Server);
-        let parent_span = parent_context.span();
-        builder = builder.with_trace_id(parent_span.span_context().trace_id());
-        builder = builder.with_span_id(parent_span.span_context().span_id());
         let mut attributes = OrderMap::<Key, Value>::with_capacity(11);
         attributes.insert(HTTP_METHOD, http_method_str(req.method()).into());
         attributes.insert(HTTP_FLAVOR, http_flavor(req.version()).into());
         attributes.insert(HTTP_URL, uri.to_string().into());
-
         if let Some(host_name) = SYSTEM.host_name() {
             attributes.insert(NET_HOST_NAME, host_name.into());
         }
-
         if let Some(path) = uri.path_and_query() {
             attributes.insert(HTTP_TARGET, path.as_str().to_string().into());
         }
@@ -160,7 +156,6 @@ where
         builder.attributes = Some(attributes);
         let span = self.tracer.build(builder);
         let cx = Context::current_with_span(span);
-        let attachment = cx.clone().attach();
 
         let fut = self
             .inner
@@ -194,7 +189,6 @@ where
                 }
             });
 
-        drop(attachment);
         Box::pin(fut)
     }
 }
